@@ -22,3 +22,8 @@ Thumbs.db
 
 # Logs
 *.log
+
+backend/app/ml/data/
+backend/app/ml/fraud_model.pt
+backend/app/ml/isolation_forest.pkl
+backend/venv/
