@@ -1,18 +1,23 @@
-# Intelligent Secure Transaction System
+# 🔐 Intelligent Secure Transaction System
 
-AI-driven zero-trust financial transaction system integrating:
+An AI-driven zero-trust transaction security system integrating:
 
-- PyTorch risk scoring
-- ECDSA cryptographic signing
-- Adaptive policy engine
-- Persistent blockchain ledger
-- FastAPI REST API
+- 🧠 PyTorch-based risk scoring
+- 🔐 ECDSA cryptographic signing
+- 📜 Adaptive policy engine
+- ⛓ Persistent blockchain ledger
+- 🌐 FastAPI REST API
 
-## Architecture
+---
 
-AI → Policy → Crypto → Blockchain → REST API
+## 🏗 Architecture
 
-## Run
+AI Risk Engine → Policy Engine → Cryptographic Validation → Blockchain Commit → REST API
 
-cd backend  
-uvicorn app.main:app --reload
+---
+
+## 📦 Clone the Repository
+
+```bash
+git clone https://github.com/shravya004/Secure_Transaction_System.git
+cd Secure_Transaction_System
