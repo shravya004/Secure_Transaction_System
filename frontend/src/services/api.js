@@ -1,138 +1,131 @@
 import axios from 'axios';
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-
-const api = axios.create({ baseURL: BASE, timeout: 15000 });
+const api  = axios.create({ baseURL: BASE, timeout: 15000 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BACKEND CONTRACT (from reading the actual source code)
+// BACKEND ENDPOINTS (from reading actual source code):
 //
-// POST /transaction
-//   Request:  { features: float[], amount: float, sender: str, receiver: str }
-//   Response: { status: "success", message: "✅ Transaction Approved — Risk Score: 0.23" }
-//             { status: "success", message: "🚨 Transaction Rejected by AI — Risk Score: 0.87" }
-//             { status: "success", message: "❌ Signature Invalid — Transaction Rejected" }
+// POST /transaction   → { status, message: "✅ Transaction Approved — Risk Score: 0.23" }
+//   uses app/core/secure_pipeline.py → app/ai_engine/predict.py
 //
-// GET /blockchain
-//   Response: {
-//     chain_length: int,
-//     is_valid: bool,
-//     chain: [
-//       { index: 0, timestamp: float, data: "Genesis Block", previous_hash: "0", nonce: 0, hash: str },
-//       { index: 1, timestamp: float, data: { transaction: { features, amount, sender, receiver },
-//                                             risk_score: float (0.0–1.0),
-//                                             signature: str },
-//         previous_hash: str, nonce: int, hash: str }
-//     ]
-//   }
+// POST /predict       → { transaction_id, risk_score, status, message }
+//   uses app/routers/predict.py → app/ml/inference.py
+//   expects: { features: float[30] }   ← creditcard.csv has 30 features
+//
+// GET  /blockchain    → { chain_length, is_valid, chain: [...blocks] }
+//
+// Block shape:
+//   { index, timestamp (Unix float), previous_hash, nonce, hash,
+//     data: { transaction: { features, amount, sender, receiver },
+//             risk_score: float 0–1,
+//             signature: str } }
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Parse message string → { status, riskScore, approved }
+// creditcard.csv column order: Time, V1..V28, Amount (30 total)
+// Map our UI sliders + inputs into all 30 features
+function buildFeatures(form) {
+  const time   = parseFloat(form.time)   || 0;
+  const amount = parseFloat(form.amount) || 0;
+  const v = [1,2,3,4,5,6].map(i => parseFloat(form[`v${i}`]) || 0);
+
+  // Build a 30-element array matching: Time, V1-V28, Amount
+  // UI gives us Time, V1-V6, Amount (8 values)
+  // Fill V7-V28 with 0 (neutral/unknown)
+  const features = [
+    time,           // index 0  = Time
+    v[0], v[1], v[2], v[3], v[4], v[5],  // V1-V6 (indices 1-6)
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        // V7-V16
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        // V17-V26
+    0, 0,           // V27-V28
+    amount,         // index 29 = Amount
+  ];
+
+  return features; // length = 30
+}
+
+// Parse "✅ Transaction Approved — Risk Score: 0.23" → { status, riskScore }
 function parseMessage(message) {
-  const scoreMatch = message.match(/Risk Score[:\s]+([\d.]+)/i);
-  const riskScore  = scoreMatch ? parseFloat(scoreMatch[1]) : null;
-
-  let status = 'REVIEW';
-  if (message.includes('Approved') || message.includes('✅')) {
-    status = 'APPROVED';
-  } else if (
-    message.includes('Rejected') ||
-    message.includes('🚨') ||
-    message.includes('❌') ||
-    message.includes('Invalid')
-  ) {
-    status = 'FLAGGED';
-  }
-
+  const match     = message.match(/Risk Score[:\s]+([\d.]+)/i);
+  const riskScore = match ? parseFloat(match[1]) : null;
+  let status      = 'REVIEW';
+  if (message.includes('Approved') || message.includes('✅')) status = 'APPROVED';
+  else if (message.includes('Rejected') || message.includes('🚨') || message.includes('❌')) status = 'FLAGGED';
   return { status, riskScore };
 }
 
-// Convert a real blockchain block → frontend-friendly shape
-// Block fields: { index, timestamp, data: { transaction, risk_score, signature },
-//                 previous_hash, nonce, hash }
+// Normalize a blockchain block → frontend shape
 function normalizeBlock(block) {
   const tx  = block.data?.transaction || {};
   const rs  = block.data?.risk_score;
   const sig = block.data?.signature;
 
   return {
-    // identity
     id:          block.hash,
     block_index: block.index,
-
-    // transaction payload
-    amount:   tx.amount   ?? 0,
-    sender:   tx.sender   ?? '—',
-    receiver: tx.receiver ?? '—',
-    features: tx.features ?? [],
-
-    // risk
-    risk_score: rs ?? null,
-    status:     rs != null
-                  ? (rs > 0.5 ? 'FLAGGED' : 'APPROVED')
-                  : 'APPROVED',
-
-    // blockchain proof
-    block_hash:    block.hash,
-    prev_hash:     block.previous_hash,
-    nonce:         block.nonce,
-    signature:     sig ?? '—',
-
-    // time — backend stores Unix float seconds
-    timestamp: new Date(block.timestamp * 1000).toISOString(),
+    amount:      tx.amount   ?? 0,
+    sender:      tx.sender   ?? '—',
+    receiver:    tx.receiver ?? '—',
+    features:    tx.features ?? [],
+    risk_score:  rs ?? null,
+    status:      rs != null ? (rs > 0.5 ? 'FLAGGED' : 'APPROVED') : 'APPROVED',
+    block_hash:  block.hash,
+    prev_hash:   block.previous_hash,
+    nonce:       block.nonce,
+    signature:   sig ?? '—',
+    timestamp:   new Date(block.timestamp * 1000).toISOString(),
   };
 }
 
 // ── 1. Submit transaction ─────────────────────────────────────────────────
+// Uses POST /predict (returns real risk score from PyTorch model)
+// Then POST /transaction (runs full ECDSA + blockchain pipeline)
 export const predictTransaction = async (formData) => {
-  // Map UI form → backend payload
-  // features[] must be floats matching the scaler's expected input_dim
-  const features = [
-    parseFloat(formData.v1)  || 0,
-    parseFloat(formData.v2)  || 0,
-    parseFloat(formData.v3)  || 0,
-    parseFloat(formData.v4)  || 0,
-    parseFloat(formData.v5)  || 0,
-    parseFloat(formData.v6)  || 0,
-    parseFloat(formData.time)   || 0,
-    parseFloat(formData.amount) || 0,
-  ];
+  const features = buildFeatures(formData);
+  const amount   = parseFloat(formData.amount);
+  const sender   = formData.sender   || formData.user_id || 'user_unknown';
+  const receiver = formData.receiver || 'merchant_001';
 
-  const payload = {
-    features,
-    amount:   parseFloat(formData.amount),
-    sender:   formData.sender   || formData.user_id || 'user_unknown',
-    receiver: formData.receiver || 'merchant_001',
-  };
-
-  const res = await api.post('/transaction', payload);
-
-  if (res.data.status !== 'success') {
-    throw new Error(res.data.message || 'Transaction failed');
+  // Step 1: Get real AI risk score from /predict
+  let riskScore  = null;
+  let aiStatus   = 'APPROVED';
+  try {
+    const predRes = await api.post('/predict', { features });
+    riskScore = predRes.data.risk_score;
+    aiStatus  = predRes.data.status === 'REJECTED' ? 'FLAGGED' : 'APPROVED';
+  } catch (e) {
+    console.warn('/predict endpoint failed, falling back to /transaction only');
   }
 
-  const { status, riskScore } = parseMessage(res.data.message);
+  // Step 2: Run full pipeline (ECDSA sign + blockchain write)
+  const txRes = await api.post('/transaction', { features, amount, sender, receiver });
+  if (txRes.data.status !== 'success') throw new Error(txRes.data.message);
+
+  const parsed = parseMessage(txRes.data.message);
+
+  // Use /predict score if available (more accurate), else parse from message
+  const finalScore  = riskScore ?? parsed.riskScore ?? (parsed.status === 'FLAGGED' ? 0.82 : 0.11);
+  const finalStatus = riskScore != null ? aiStatus : parsed.status;
 
   return {
-    status,
-    risk_score:     riskScore ?? (status === 'FLAGGED' ? 0.82 : 0.11),
-    ai_score:       riskScore ?? 0,
-    behavior_score: 0,             // not in this backend
+    status:         finalStatus,
+    risk_score:     finalScore,
+    ai_score:       finalScore,
+    behavior_score: 0,
     transaction_id: `tx-${Date.now()}`,
-    raw_message:    res.data.message,
-    top_features:   null,          // SHAP not in this backend
+    raw_message:    txRes.data.message,
+    top_features:   null,
   };
 };
 
-// ── 2. Get full blockchain ────────────────────────────────────────────────
+// ── 2. Get blockchain ledger ──────────────────────────────────────────────
 export const getLedger = async () => {
-  const res  = await api.get('/blockchain');
+  const res   = await api.get('/blockchain');
   const chain = res.data.chain ?? [];
-
   return chain
-    .filter(b => b.index !== 0)          // skip genesis block
+    .filter(b => b.index !== 0)   // skip genesis block
     .map(normalizeBlock)
-    .reverse();                           // newest first
+    .reverse();                    // newest first
 };
 
 // ── 3. Dashboard stats — computed from blockchain ─────────────────────────
@@ -145,37 +138,27 @@ export const getDashboardStats = async () => {
 
   if (total === 0) {
     return {
-      total_today:   0,
-      flagged_count: 0,
-      fraud_rate:    0,
-      avg_risk:      0,
+      total_today: 0, flagged_count: 0, fraud_rate: 0, avg_risk: 0,
       status_counts: { APPROVED: 0, FLAGGED: 0 },
-      chain_length,
-      chain_valid:   is_valid,
-      hourly_trend:  [],
+      chain_length, chain_valid: is_valid, hourly_trend: [],
       threshold_level: 'normal',
     };
   }
 
-  const riskScores  = realBlocks.map(b => b.data?.risk_score).filter(s => s != null);
-  const flaggedCount = riskScores.filter(s => s > 0.5).length;
+  const riskScores    = realBlocks.map(b => b.data?.risk_score).filter(s => s != null);
+  const flaggedCount  = riskScores.filter(s => s > 0.5).length;
   const approvedCount = total - flaggedCount;
-  const avgRisk     = riskScores.length
-    ? riskScores.reduce((a, b) => a + b, 0) / riskScores.length
-    : 0;
+  const avgRisk       = riskScores.length
+    ? riskScores.reduce((a, b) => a + b, 0) / riskScores.length : 0;
 
-  // Group by hour of day using Unix timestamp
+  // Hourly trend
   const hourlyMap = {};
-  realBlocks.forEach(block => {
-    const date = new Date(block.timestamp * 1000);
-    const hour = date.getHours().toString().padStart(2, '0');
+  realBlocks.forEach(b => {
+    const hour = new Date(b.timestamp * 1000).getHours().toString().padStart(2, '0');
     if (!hourlyMap[hour]) hourlyMap[hour] = { hour, total: 0, flagged: 0 };
     hourlyMap[hour].total++;
-    if ((block.data?.risk_score ?? 0) > 0.5) hourlyMap[hour].flagged++;
+    if ((b.data?.risk_score ?? 0) > 0.5) hourlyMap[hour].flagged++;
   });
-  const hourlyTrend = Object.values(hourlyMap).sort((a, b) =>
-    a.hour.localeCompare(b.hour)
-  );
 
   return {
     total_today:     total,
@@ -185,47 +168,29 @@ export const getDashboardStats = async () => {
     status_counts:   { APPROVED: approvedCount, FLAGGED: flaggedCount },
     chain_length,
     chain_valid:     is_valid,
-    hourly_trend:    hourlyTrend,
+    hourly_trend:    Object.values(hourlyMap).sort((a, b) => a.hour.localeCompare(b.hour)),
     threshold_level: avgRisk > 0.4 ? 'tight' : 'normal',
   };
 };
 
 // ── 4. Recent transactions ────────────────────────────────────────────────
-export const getRecentTransactions = async () => {
-  const ledger = await getLedger();
-  return ledger.slice(0, 10);
-};
+export const getRecentTransactions = async () => (await getLedger()).slice(0, 10);
 
 // ── 5. Alerts — blocks where risk_score > 0.5 ────────────────────────────
-export const getAlerts = async () => {
-  const ledger = await getLedger();
-  return ledger
+export const getAlerts = async () =>
+  (await getLedger())
     .filter(tx => tx.status === 'FLAGGED')
-    .map(tx => ({
-      ...tx,
-      top_features: null,   // SHAP not available in this backend
-    }));
-};
+    .map(tx => ({ ...tx, top_features: null }));
 
-// ── 6. Acknowledge alert — client-side only (no backend endpoint) ─────────
-// Alerts.jsx manages acknowledged IDs in React state (localAcked)
-export const acknowledgeAlert = async (alertId) => {
-  // When backend adds POST /alerts/{id}/acknowledge, replace with:
-  // await api.post(`/alerts/${alertId}/acknowledge`);
-  return { acknowledged: true, id: alertId };
-};
+// ── 6. Acknowledge alert (client-side only) ───────────────────────────────
+export const acknowledgeAlert = async (alertId) =>
+  ({ acknowledged: true, id: alertId });
 
-// ── 7. System status — derived from chain health ──────────────────────────
+// ── 7. System status ──────────────────────────────────────────────────────
 export const getSystemStatus = async () => {
   const stats = await getDashboardStats();
-  return {
-    threshold_level: stats.threshold_level,
-    threshold_value: stats.avg_risk,
-    chain_valid:     stats.chain_valid,
-  };
+  return { threshold_level: stats.threshold_level, threshold_value: stats.avg_risk, chain_valid: stats.chain_valid };
 };
 
-// ── 8. Explain transaction — not in this backend ──────────────────────────
-export const explainTransaction = async (_txId) => {
-  return { top_features: null };
-};
+// ── 8. Explain transaction (not in backend) ───────────────────────────────
+export const explainTransaction = async () => ({ top_features: null });

@@ -5,11 +5,16 @@ import StatusBadge from '../components/ui/StatusBadge';
 import { Send, RotateCcw, AlertCircle, CheckCircle, ShieldAlert, Lock } from 'lucide-react';
 
 const defaultForm = {
-  amount:   '',
-  time:     '',
-  sender:   '',
-  receiver: '',
+  amount: '', time: '', sender: '', receiver: '',
   v1: 0, v2: 0, v3: 0, v4: 0, v5: 0, v6: 0,
+};
+
+// Real fraud pattern presets from creditcard.csv
+const PRESETS = {
+  normal: { amount: 150, time: 50000, v1: 0, v2: 0, v3: 0, v4: 0, v5: 0, v6: 0 },
+  fraud1: { amount: 0,   time: 10000, v1: -2.3, v2: 1.9, v3: -1.6, v4: 4.0, v5: -0.5, v6: -1.4 },
+  fraud2: { amount: 529, time: 20000, v1: -3.0, v2: -3.1, v3: 1.0,  v4: 2.2, v5: 1.3,  v6: -1.0 },
+  fraud3: { amount: 240, time: 80000, v1: -2.3, v2: 1.8,  v3: -0.4, v4: 2.3, v5: -0.8, v6: -0.1 },
 };
 
 export default function Transaction() {
@@ -19,6 +24,13 @@ export default function Transaction() {
   const [error,   setError]   = useState('');
 
   const set = e => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
+
+  const applyPreset = (key) => {
+    const p = PRESETS[key];
+    setForm(prev => ({ ...prev, ...p, sender: prev.sender || 'user_a', receiver: prev.receiver || 'merchant_b' }));
+    setResult(null);
+    setError('');
+  };
 
   const handleSubmit = async () => {
     if (!form.amount || !form.sender || !form.receiver) {
@@ -31,10 +43,7 @@ export default function Transaction() {
       const res = await predictTransaction(form);
       setResult(res);
     } catch (e) {
-      setError(
-        e.response?.data?.detail ||
-        'Could not reach backend. Is uvicorn running on port 8000?'
-      );
+      setError(e.response?.data?.detail || 'Could not reach backend. Is uvicorn running on port 8000?');
     } finally {
       setLoading(false);
     }
@@ -42,30 +51,56 @@ export default function Transaction() {
 
   const handleReset = () => { setForm(defaultForm); setResult(null); setError(''); };
 
+  const riskColor = score =>
+    score > 0.65 ? 'text-red-600' : score > 0.35 ? 'text-yellow-600' : 'text-green-600';
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
 
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Submit Transaction</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-          Runs through the full pipeline: ECDSA sign → AI risk score → Policy → Blockchain
+          Runs through: ECDSA sign → PyTorch AI score → Policy → Blockchain write
         </p>
       </div>
 
-      {/* ── Form ─────────────────────────────────────────────────────── */}
-      <div className="card space-y-5">
+      {/* Quick presets */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <span className="text-xs text-gray-500 font-medium">Quick test:</span>
+        <button onClick={() => applyPreset('normal')}
+          className="text-xs px-3 py-1.5 rounded-full bg-green-100 dark:bg-green-900/30
+                     text-green-700 dark:text-green-300 hover:bg-green-200 transition-colors">
+          ✓ Normal Transaction
+        </button>
+        <button onClick={() => applyPreset('fraud1')}
+          className="text-xs px-3 py-1.5 rounded-full bg-red-100 dark:bg-red-900/30
+                     text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors">
+          ⚠ Fraud Pattern 1
+        </button>
+        <button onClick={() => applyPreset('fraud2')}
+          className="text-xs px-3 py-1.5 rounded-full bg-red-100 dark:bg-red-900/30
+                     text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors">
+          ⚠ Fraud Pattern 2
+        </button>
+        <button onClick={() => applyPreset('fraud3')}
+          className="text-xs px-3 py-1.5 rounded-full bg-red-100 dark:bg-red-900/30
+                     text-red-700 dark:text-red-300 hover:bg-red-200 transition-colors">
+          ⚠ Fraud Pattern 3
+        </button>
+      </div>
 
-        {/* Core fields */}
+      {/* Form */}
+      <div className="card space-y-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
             Transaction Details
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {[
-              { name: 'amount',   label: 'Amount ($)',     type: 'number', placeholder: '250.00',       required: true },
-              { name: 'time',     label: 'Time (seconds)', type: 'number', placeholder: '86400',         required: false },
-              { name: 'sender',   label: 'Sender ID',      type: 'text',   placeholder: 'user_alice',    required: true },
-              { name: 'receiver', label: 'Receiver ID',    type: 'text',   placeholder: 'merchant_001',  required: true },
+              { name: 'amount',   label: 'Amount ($)',     type: 'number', placeholder: '250.00',      required: true },
+              { name: 'time',     label: 'Time (seconds)', type: 'number', placeholder: '86400',        required: false },
+              { name: 'sender',   label: 'Sender ID',      type: 'text',   placeholder: 'user_alice',   required: true },
+              { name: 'receiver', label: 'Receiver ID',    type: 'text',   placeholder: 'merchant_001', required: true },
             ].map(({ name, label, type, placeholder, required }) => (
               <div key={name}>
                 <label className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">
@@ -83,97 +118,96 @@ export default function Transaction() {
           </div>
         </div>
 
-        {/* V-feature sliders */}
+        {/* V sliders — extended range to -5/+5 to cover real fraud patterns */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1">
             AI Feature Inputs (V1–V6)
           </p>
           <p className="text-xs text-gray-400 mb-3">
-            PCA-anonymised behavioural signals — sent as <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">features[]</code> to the PyTorch risk model.
-            Slide right (positive) to simulate suspicious behaviour.
+            PCA-anonymised signals sent as <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">features[]</code> to PyTorch model.
+            Use presets above to test real fraud patterns.
           </p>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[1,2,3,4,5,6].map(i => (
-              <div key={i}>
-                <label className="text-xs text-gray-500 dark:text-gray-400 flex justify-between">
-                  <span>V{i}</span>
-                  <span className={`font-bold ${form[`v${i}`] > 0 ? 'text-red-500' : form[`v${i}`] < 0 ? 'text-blue-500' : 'text-gray-500'}`}>
-                    {Number(form[`v${i}`]).toFixed(1)}
-                  </span>
-                </label>
-                <input
-                  type="range" name={`v${i}`} min="-3" max="3" step="0.1"
-                  value={form[`v${i}`]} onChange={set}
-                  className="w-full accent-blue-600 mt-1"
-                />
-              </div>
-            ))}
+            {[1,2,3,4,5,6].map(i => {
+              const val = Number(form[`v${i}`]);
+              return (
+                <div key={i}>
+                  <label className="text-xs text-gray-500 dark:text-gray-400 flex justify-between">
+                    <span>V{i}</span>
+                    <span className={`font-bold ${val > 0 ? 'text-red-500' : val < 0 ? 'text-blue-500' : 'text-gray-400'}`}>
+                      {val.toFixed(1)}
+                    </span>
+                  </label>
+                  <input
+                    type="range" name={`v${i}`}
+                    min="-5" max="5" step="0.1"   // extended to -5/+5 for real fraud patterns
+                    value={form[`v${i}`]} onChange={set}
+                    className="w-full accent-blue-600 mt-1"
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* Actions */}
         <div className="flex flex-wrap gap-3 pt-1">
-          <button
-            onClick={handleSubmit} disabled={loading}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50"
-          >
+          <button onClick={handleSubmit} disabled={loading}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50">
             {loading
-              ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" /> Processing...</>
-              : <><Send size={16} /> Submit Transaction</>
+              ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"/>Processing...</>
+              : <><Send size={16}/>Submit Transaction</>
             }
           </button>
           <button onClick={handleReset} className="btn-secondary flex items-center gap-2">
-            <RotateCcw size={16} /> Reset
+            <RotateCcw size={16}/> Reset
           </button>
         </div>
 
         {error && (
           <div className="flex items-center gap-2 text-red-600 dark:text-red-400 text-sm
                           bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-2">
-            <AlertCircle size={16} className="flex-shrink-0" />
+            <AlertCircle size={16} className="flex-shrink-0"/>
             {error}
           </div>
         )}
       </div>
 
-      {/* ── Result ───────────────────────────────────────────────────── */}
+      {/* Result */}
       {result && (
         <div className="card space-y-6">
-
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white flex items-center gap-2">
             {result.status === 'APPROVED'
-              ? <CheckCircle  size={20} className="text-green-500" />
-              : <ShieldAlert  size={20} className="text-red-500"   />
+              ? <CheckCircle size={20} className="text-green-500"/>
+              : <ShieldAlert  size={20} className="text-red-500"/>
             }
             Analysis Result
           </h2>
 
-          {/* Raw message banner */}
+          {/* Status banner */}
           <div className={`rounded-lg border px-4 py-3 text-sm font-medium
             ${result.status === 'APPROVED'
               ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-700 text-green-800 dark:text-green-200'
-              : 'bg-red-50   dark:bg-red-900/20   border-red-200   dark:border-red-700   text-red-800   dark:text-red-200'
-            }`}
-          >
-            {result.raw_message}
+              : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-700 text-red-800 dark:text-red-200'
+            }`}>
+            {result.status === 'APPROVED' ? '✅' : '🚨'} Transaction {result.status} —
+            Risk Score: <strong>{(result.risk_score * 100).toFixed(2)}%</strong>
           </div>
 
           <div className="flex flex-col md:flex-row gap-8 items-center">
-            <RiskGauge score={result.risk_score} />
-
+            <RiskGauge score={result.risk_score}/>
             <div className="grid grid-cols-2 gap-3 flex-1 w-full">
               {[
-                { label: 'Status',         value: <StatusBadge status={result.status} /> },
-                { label: 'Risk Score',     value: <span className="font-bold text-lg">{(result.risk_score * 100).toFixed(2)}%</span> },
-                { label: 'AI Score',       value: <span className="font-semibold">{(result.ai_score * 100).toFixed(2)}%</span> },
-                { label: 'ECDSA Signing',  value: <span className="text-green-600 dark:text-green-400 font-semibold flex items-center gap-1"><Lock size={12}/> Verified</span> },
+                { label: 'Status',        value: <StatusBadge status={result.status}/> },
+                { label: 'Risk Score',    value: <span className={`font-bold text-lg ${riskColor(result.risk_score)}`}>{(result.risk_score * 100).toFixed(2)}%</span> },
+                { label: 'AI Score',      value: <span className="font-semibold">{(result.ai_score * 100).toFixed(2)}%</span> },
+                { label: 'ECDSA Signing', value: <span className="text-green-600 dark:text-green-400 font-semibold flex items-center gap-1"><Lock size={12}/>Verified</span> },
               ].map(({ label, value }) => (
                 <div key={label} className="bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">{label}</p>
                   {value}
                 </div>
               ))}
-
               <div className="col-span-2 bg-gray-50 dark:bg-gray-700/50 rounded-xl p-4">
                 <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Transaction ID</p>
                 <p className="font-mono text-xs break-all text-blue-700 dark:text-blue-400">{result.transaction_id}</p>
@@ -183,25 +217,19 @@ export default function Transaction() {
 
           {/* Pipeline steps */}
           <div className="border-t dark:border-gray-700 pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
-              Pipeline Completed
-            </p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">Pipeline Completed</p>
             <div className="flex flex-wrap gap-2">
               {[
-                'SHA-256 Hash',
-                'ECDSA Sign',
-                'Sig Verify',
-                'PyTorch AI Score',
-                'Policy Decision',
+                'SHA-256 Hash', 'ECDSA Sign', 'Sig Verify',
+                'PyTorch AI Score', 'Policy Decision',
                 result.status === 'APPROVED' ? 'Blockchain Write ✓' : 'Rejected (not written)',
               ].map((step, i) => (
                 <span key={i} className={`text-xs px-3 py-1 rounded-full font-medium
                   ${i === 5 && result.status !== 'APPROVED'
                     ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                     : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                  }`}
-                >
-                  {i + 1}. {step}
+                  }`}>
+                  {i+1}. {step}
                 </span>
               ))}
             </div>
@@ -210,11 +238,10 @@ export default function Transaction() {
           <p className="text-xs text-gray-400">
             {result.status === 'APPROVED'
               ? 'This transaction has been committed to the blockchain. View it in the Ledger tab.'
-              : 'High-risk transactions are not written to the blockchain.'}
+              : 'High-risk transactions are rejected and not written to the blockchain.'}
           </p>
         </div>
       )}
-
     </div>
   );
 }

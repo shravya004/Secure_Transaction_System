@@ -1,19 +1,16 @@
 import os
 import torch
-import pickle
+import joblib
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-# === SAME MODEL ARCHITECTURE AS TRAINED ===
 class TrustScoreModel(nn.Module):
     def __init__(self, input_dim):
         super(TrustScoreModel, self).__init__()
-        
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.fc2 = nn.Linear(64, 32)
-        self.fc3 = nn.Linear(32, 1)
+        self.fc1     = nn.Linear(input_dim, 64)
+        self.fc2     = nn.Linear(64, 32)
+        self.fc3     = nn.Linear(32, 1)
         self.dropout = nn.Dropout(0.3)
 
     def forward(self, x):
@@ -23,33 +20,38 @@ class TrustScoreModel(nn.Module):
         x = torch.sigmoid(self.fc3(x))
         return x
 
-
-# === Load Model + Scaler ===
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
-MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
-
-MODEL_PATH = os.path.join(MODELS_DIR, "trust_model.pt")
-SCALER_PATH = os.path.join(MODELS_DIR, "scaler.pkl")
+MODEL_PATH   = os.path.join(PROJECT_ROOT, "data", "models", "trust_model.pt")
+SCALER_PATH  = os.path.join(PROJECT_ROOT, "data", "processed", "features.pkl")
 
 # Load scaler
-with open(SCALER_PATH, "rb") as f:
-    scaler = pickle.load(f)
+scaler = joblib.load(SCALER_PATH)
+
+# Read input_dim from scaler (don't hardcode 30)
+input_dim = scaler.mean_.shape[0]
 
 # Load model
-input_dim = 30  # credit card dataset feature count
 model = TrustScoreModel(input_dim)
-model.load_state_dict(torch.load(MODEL_PATH))
+model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
 model.eval()
 
-
 def predict_transaction(features: list):
-    features = np.array(features).reshape(1, -1)
-    features_scaled = scaler.transform(features)
+    arr = np.array(features, dtype=np.float32)
 
-    tensor_input = torch.tensor(features_scaled, dtype=torch.float32)
+    # If frontend sends fewer features than model expects,
+    # pad with zeros on the right
+    if arr.shape[0] < input_dim:
+        arr = np.pad(arr, (0, input_dim - arr.shape[0]))
+    # If too many, truncate
+    elif arr.shape[0] > input_dim:
+        arr = arr[:input_dim]
+
+    arr = arr.reshape(1, -1)
+    scaled = scaler.transform(arr)
+    tensor = torch.tensor(scaled, dtype=torch.float32)
 
     with torch.no_grad():
-        output = model(tensor_input).item()
+        output = model(tensor).item()
 
     return float(output)

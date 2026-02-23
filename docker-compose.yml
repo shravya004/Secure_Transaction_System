@@ -1,1 +1,29 @@
-# Placeholder for docker-compose.yml
+version: '3.9'
+
+services:
+  backend:
+    build: ./backend
+    container_name: fraudx-backend
+    ports:
+      - '8000:8000'
+    environment:
+      - MODEL_PATH=/app/ml/fraud_model.pt
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - fraudx-network
+
+  frontend:
+    build: ./frontend
+    container_name: fraudx-frontend
+    ports:
+      - '3000:80'
+    depends_on:
+      - backend
+    networks:
+      - fraudx-network
+
+networks:
+  fraudx-network:
+    driver: bridge
