@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 # Core pipeline
 from app.core.secure_pipeline import process_transaction
@@ -80,3 +81,12 @@ def get_blockchain():
         "is_valid": blockchain.is_chain_valid(),
         "chain": blockchain.chain
     }
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
