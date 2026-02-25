@@ -5,7 +5,7 @@
 ![Stack](https://img.shields.io/badge/Frontend-React%2018%20%2B%20Vite-blue)
 ![Stack](https://img.shields.io/badge/Backend-FastAPI%20%2B%20Python-green)
 ![Stack](https://img.shields.io/badge/ML-DNN%20%2B%20SHAP-orange)
-![Stack](https://img.shields.io/badge/Blockchain-Consortium-style%20ledger-purple)
+![Stack](https://img.shields.io/badge/Blockchain-Hyperledger%20Fabric-purple)
 
 ---
 
