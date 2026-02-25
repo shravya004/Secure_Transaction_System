@@ -46,9 +46,6 @@ User Browser (React/Vite)
 
 ## 🚀 Quick Start (Docker — Recommended)
 
-### Prerequisites
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-
 ### One-command launch
 
 ```bash
