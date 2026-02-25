@@ -179,8 +179,8 @@ VITE_API_URL=http://localhost:8000
 | Person | Role | 
 |--------|------|
 | Person 1 (shravya004) | FastAPI, blockchain, cybersecurity integration |
-| Person 2 (tanishasenapati13) | Frontend (React dashboard, transaction UI, ledger explorer, alerts panel, SHAP) |
-| Person 3 (Ishita2005cse) | Backend + ML, DNN model |
+| Person 2 (tanishasenapati13) | Frontend (React dashboard, transaction UI, ledger explorer, alerts panel, SHAP), AI+ML|
+| Person 3 (Ishita2005cse) | Backend + ML, DNN model, Cryptography |
 
 
 ---
