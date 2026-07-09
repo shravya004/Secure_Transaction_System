@@ -6,98 +6,133 @@ from sklearn.preprocessing import StandardScaler
 from imblearn.over_sampling import SMOTE
 import torch
 
+
 def load_and_preprocess(return_df=False, random_seed=42):
+
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     BACKEND_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
     file_path = os.path.join(BACKEND_DIR, "data", "creditcard.csv")
+
     print("Loading dataset from:", file_path)
 
     df = pd.read_csv(file_path)
 
-    # ===============================
-    # FEATURE ENGINEERING
-    # ===============================
-    df['Amount'] = np.log1p(df['Amount'])
-    df['Time'] = df['Time'] / df['Time'].max()
+    # -----------------------------
+    # Feature Engineering
+    # -----------------------------
+    df["Amount"] = np.log1p(df["Amount"])
+    df["Time"] = df["Time"] / df["Time"].max()
 
-    # ===============================
-    # SPLIT FEATURES & TARGET
-    # ===============================
     X = df.drop("Class", axis=1)
     y = df["Class"]
 
-    # ===============================
-    # STEP 1: SPLIT FIRST (no leakage)
-    # ===============================
-    X_train, X_test, y_train, y_test = train_test_split(
+    # ==================================================
+    # Train/Test Split
+    # ==================================================
+    X_trainval, X_test, y_trainval, y_test = train_test_split(
         X,
         y,
-        test_size=0.2,
+        test_size=0.20,
+        stratify=y,
         random_state=random_seed,
-        stratify=y
     )
 
-    # ===============================
-    # STEP 2: SCALE (fit only on train)
-    # ===============================
+    # ==================================================
+    # Train/Validation Split
+    # ==================================================
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_trainval,
+        y_trainval,
+        test_size=0.10,
+        stratify=y_trainval,
+        random_state=random_seed,
+    )
+
+    # ==================================================
+    # Scaling (fit ONLY on training)
+    # ==================================================
     scaler = StandardScaler()
+
     X_train_scaled = scaler.fit_transform(X_train)
+
+    X_val_scaled = scaler.transform(X_val)
+
     X_test_scaled = scaler.transform(X_test)
 
-    # ===============================
-    # STEP 3: SMOTE (only on train)
-    # ===============================
+    # ==================================================
+    # SMOTE ONLY on TRAIN
+    # ==================================================
     smote = SMOTE(random_state=random_seed)
-    X_train_resampled, y_train_resampled = smote.fit_resample(
+
+    X_train_balanced, y_train_balanced = smote.fit_resample(
         X_train_scaled,
-        y_train
+        y_train,
     )
 
-    # ===============================
-    # STEP 4: SHUFFLE (critical after SMOTE)
-    # ===============================
-    shuffle_idx = np.random.RandomState(random_seed).permutation(
-        len(X_train_resampled)
+    # Shuffle after SMOTE
+
+    idx = np.random.RandomState(random_seed).permutation(
+        len(X_train_balanced)
     )
 
-    X_train_resampled = X_train_resampled[shuffle_idx]
-    y_train_resampled = np.array(y_train_resampled)[shuffle_idx]
+    X_train_balanced = X_train_balanced[idx]
+    y_train_balanced = np.array(y_train_balanced)[idx]
 
-    # ===============================
-    # CONVERT TO TENSORS
-    # ===============================
-    X_train_t = torch.tensor(X_train_resampled, dtype=torch.float32)
+    # ==================================================
+    # Convert to tensors
+    # ==================================================
+    X_train_t = torch.tensor(X_train_balanced, dtype=torch.float32)
+
+    X_val_t = torch.tensor(X_val_scaled, dtype=torch.float32)
+
     X_test_t = torch.tensor(X_test_scaled, dtype=torch.float32)
-    y_train_t = torch.tensor(y_train_resampled, dtype=torch.float32)
+
+    y_train_t = torch.tensor(y_train_balanced, dtype=torch.float32)
+
+    y_val_t = torch.tensor(y_val.values, dtype=torch.float32)
+
     y_test_t = torch.tensor(y_test.values, dtype=torch.float32)
 
     if return_df:
-        return X_train_t, X_test_t, y_train_t, y_test_t, scaler, df
-    else:
-        return X_train_t, X_test_t, y_train_t, y_test_t, scaler
+        return (
+            X_train_t,
+            X_val_t,
+            X_test_t,
+            y_train_t,
+            y_val_t,
+            y_test_t,
+            scaler,
+            df,
+        )
+
+    return (
+        X_train_t,
+        X_val_t,
+        X_test_t,
+        y_train_t,
+        y_val_t,
+        y_test_t,
+        scaler,
+    )
 
 
-# ===============================
-# TEST PREPROCESS STANDALONE
-# ===============================
 if __name__ == "__main__":
-    X_train, X_test, y_train, y_test, scaler = load_and_preprocess()
 
-    print("X_train shape:", X_train.shape)
-    print("X_test shape :", X_test.shape)
-    print("y_train shape:", y_train.shape)
-    print("y_test shape :", y_test.shape)
+    (
+        X_train,
+        X_val,
+        X_test,
+        y_train,
+        y_val,
+        y_test,
+        scaler,
+    ) = load_and_preprocess()
 
-    print(
-        "Train class balance — Legit:",
-        (y_train == 0).sum().item(),
-        "Fraud:",
-        (y_train == 1).sum().item()
-    )
+    print("\nTraining")
+    print((y_train == 0).sum().item(), (y_train == 1).sum().item())
 
-    print(
-        "Test class balance — Legit:",
-        (y_test == 0).sum().item(),
-        "Fraud:",
-        (y_test == 1).sum().item()
-    )
+    print("\nValidation")
+    print((y_val == 0).sum().item(), (y_val == 1).sum().item())
+
+    print("\nTest")
+    print((y_test == 0).sum().item(), (y_test == 1).sum().item())

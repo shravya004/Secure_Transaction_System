@@ -52,28 +52,28 @@ def train(random_seed=42):
 
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(random_seed)
-    X_train, X_test, y_train, y_test, scaler, df = load_and_preprocess(return_df=True,
-    random_seed=random_seed)
-
-    # ===============================
-    # SHUFFLE BEFORE VAL SPLIT
-    # ===============================
-    perm    = torch.randperm(len(X_train), generator=torch.Generator().manual_seed(random_seed))
-    X_train = X_train[perm]
-    y_train = y_train[perm]
-
-    # ===============================
-    # VALIDATION SPLIT
-    # ===============================
-    val_size = int(0.1 * len(X_train))
-    X_val,   y_val   = X_train[:val_size], y_train[:val_size]
-    X_train, y_train = X_train[val_size:], y_train[val_size:]
+    (
+    X_train,
+    X_val,
+    X_test,
+    y_train,
+    y_val,
+    y_test,
+    scaler,
+    df,
+    ) = load_and_preprocess(
+    return_df=True,
+    random_seed=random_seed,
+    )
 
     print(f"\nTrain size : {len(X_train)}")
     print(f"Val size   : {len(X_val)}")
     print(f"Test size  : {len(X_test)}")
-    print(f"Val class balance — Legit: {(y_val==0).sum().item()}, Fraud: {(y_val==1).sum().item()}\n")
 
+    print(
+    f"Validation class balance — Legit: {(y_val==0).sum().item()}, Fraud: {(y_val==1).sum().item()}"
+    )
+    print()
     # ===============================
     # MODEL + OPTIMIZER
     # ===============================
@@ -152,13 +152,23 @@ def train(random_seed=42):
     best_threshold, best_f1 = 0.5, 0
     print("\n🔍 Tuning threshold on validation set...")
 
-    for t in tqdm(np.arange(0.1, 0.9, 0.05), desc="Threshold Tuning", colour="blue"):
+    threshold_grid = np.arange(0.01, 1.00, 0.01)
+    for t in tqdm(threshold_grid, desc="Threshold Tuning", colour="blue"):
         y_pred_temp = (val_probs >= t).astype(int)
         f1          = f1_score(y_val_np, y_pred_temp, zero_division=0)
         if f1 > best_f1:
             best_f1, best_threshold = f1, t
 
     print(f"\n✅ Best Threshold: {best_threshold:.2f}")
+
+    # Diagnostic: warn if the optimum landed on the edge of the search grid,
+    # which indicates the true optimum may lie outside the tested range.
+    if best_threshold <= threshold_grid[0] + 1e-9 or best_threshold >= threshold_grid[-1] - 1e-9:
+        tqdm.write(
+            f"⚠️  Best threshold ({best_threshold:.2f}) hit the edge of the search "
+            f"grid [{threshold_grid[0]:.2f}, {threshold_grid[-1]:.2f}]. "
+            "The true optimum may lie outside this range — consider widening it."
+        )
 
     # ===============================
     # FINAL EVALUATION ON TEST SET
