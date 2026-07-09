@@ -1,5 +1,13 @@
-from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-                              f1_score, roc_auc_score, confusion_matrix, roc_curve)
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    confusion_matrix,
+    roc_curve,
+    matthews_corrcoef
+)
 import numpy as np
 import matplotlib.pyplot as plt
 import os
@@ -38,13 +46,19 @@ class TrustScoreModel(nn.Module):
 # ===============================
 # TRAIN FUNCTION
 # ===============================
-def train():
-    X_train, X_test, y_train, y_test, scaler, df = load_and_preprocess(return_df=True)
+def train(random_seed=42):
+    torch.manual_seed(random_seed)
+    np.random.seed(random_seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(random_seed)
+    X_train, X_test, y_train, y_test, scaler, df = load_and_preprocess(return_df=True,
+    random_seed=random_seed)
 
     # ===============================
     # SHUFFLE BEFORE VAL SPLIT
     # ===============================
-    perm    = torch.randperm(len(X_train), generator=torch.Generator().manual_seed(42))
+    perm    = torch.randperm(len(X_train), generator=torch.Generator().manual_seed(random_seed))
     X_train = X_train[perm]
     y_train = y_train[perm]
 
@@ -164,6 +178,7 @@ def train():
     rec  = recall_score(y_true, y_pred, zero_division=0)
     f1   = f1_score(y_true, y_pred, zero_division=0)
     auc  = roc_auc_score(y_true, test_outputs)
+    mcc = matthews_corrcoef(y_true, y_pred)
 
     print("\n" + "="*45)
     print("🎂           MODEL PERFORMANCE           🎂")
@@ -173,6 +188,7 @@ def train():
     print(f"  🎯 Recall    : {rec:.4f}")
     print(f"  🎯 F1 Score  : {f1:.4f}")
     print(f"  🎯 ROC AUC   : {auc:.4f}")
+    print(f"  🎯 MCC       : {mcc:.4f}")
     print("="*45)
 
     # ===============================
@@ -187,7 +203,7 @@ def train():
     plt.legend()
     plt.tight_layout()
     plt.savefig("loss_curve.png")
-    plt.show()
+    plt.close()
 
     # ===============================
     # CONFUSION MATRIX
@@ -204,7 +220,7 @@ def train():
     plt.ylabel("Actual")
     plt.tight_layout()
     plt.savefig("confusion_matrix.png")
-    plt.show()
+    plt.close()
 
     # ===============================
     # ROC CURVE
@@ -220,7 +236,7 @@ def train():
     plt.legend(loc="lower right")
     plt.tight_layout()
     plt.savefig("roc_curve.png")
-    plt.show()
+    plt.close()
 
     # ===============================
     # CORRELATION HEATMAP
@@ -231,7 +247,7 @@ def train():
     plt.title("Feature Correlation Heatmap")
     plt.tight_layout()
     plt.savefig("correlation_heatmap.png")
-    plt.show()
+    plt.close()
 
     # ===============================
     # SAVE FINAL MODEL + SCALER
@@ -246,10 +262,45 @@ def train():
 
     print(f"\n💾 Model saved at : {model_path}")
     print(f"💾 Scaler saved at: {scaler_path}")
+    return {
+        "Accuracy": acc,
+        "Precision": prec,
+        "Recall": rec,
+        "F1": f1,
+        "AUROC": auc,
+        "MCC": mcc
+    }
 
 
 # ===============================
 # MAIN
 # ===============================
 if __name__ == "__main__":
-    train()
+
+    seeds = [0, 7, 21, 99, 123]
+    results = []
+
+    for seed in seeds:
+        print("\n" + "=" * 60)
+        print(f"Running experiment with seed = {seed}")
+        print("=" * 60)
+
+        metrics = train(random_seed=seed)
+        metrics["Seed"] = seed
+        results.append(metrics)
+
+    df = pd.DataFrame(results)
+
+    print("\n\n==============================")
+    print("RESULTS FOR EACH SEED")
+    print("==============================")
+    print(df.to_string(index=False))
+
+    print("\n==============================")
+    print("MEAN ± STD")
+    print("==============================")
+
+    for metric in ["Accuracy", "Precision", "Recall", "F1", "AUROC", "MCC"]:
+        mean = df[metric].mean()
+        std = df[metric].std()
+        print(f"{metric}: {mean:.4f} ± {std:.4f}")
